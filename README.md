@@ -58,6 +58,7 @@ After signing in, change it from **More → Profile → Change password**, and a
 | `PORT` | `3000` | HTTP port |
 | `DB_PATH` | `./data/qasr.db` | Database file location |
 | `COOKIE_SECURE` | off | Set to `1` when served over HTTPS |
+| `APP_TZ` | `Asia/Kolkata` | Time zone used to decide what "today" is |
 | `ADMIN_PASSWORD` | random | Password for the first `admin` login (used only when the database is first created) |
 
 ## Deploying

@@ -21,6 +21,9 @@ const need = (user, perm) => { if (!can(user, perm)) fail(403, 'You do not have 
 const str = (v, max = 500) => (v == null ? '' : String(v).trim().slice(0, max));
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+// Calendar day in the business's time zone (servers usually run on UTC).
+const TZ = process.env.APP_TZ || 'Asia/Kolkata';
+const localDay = (offsetDays = 0) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date(Date.now() + offsetDays * 86400e3));
 const url = (v) => { const s = str(v, 600); if (!s) return ''; return /^https?:\/\//i.test(s) ? s : `https://${s}`; };
 const all = (sql, ...p) => db.prepare(sql).all(...p);
 const get = (sql, ...p) => db.prepare(sql).get(...p);
@@ -242,7 +245,10 @@ const route = (method, path, handler, opts = {}) => {
 const loginAttempts = new Map();
 
 route('POST', '/api/login', async ({ req, body, res }) => {
-  const ip = req.socket.remoteAddress; const now = Date.now();
+  // Count failures per username + address: behind a hosting proxy every user shares one
+  // address, so keying on the address alone would lock the whole team out.
+  const ip = `${str(body.username, 60).toLowerCase()}|${req.socket.remoteAddress}`; const now = Date.now();
+  if (loginAttempts.size > 5000) loginAttempts.clear();
   const a = loginAttempts.get(ip) || { n: 0, t: now };
   if (now - a.t > 15 * 60e3) { a.n = 0; a.t = now; }
   if (a.n >= 10) fail(429, 'Too many attempts. Try again in a few minutes.');
@@ -278,7 +284,7 @@ route('GET', '/api/bootstrap', ({ user }) => ({
 
 // Dashboard summary
 route('GET', '/api/dashboard', ({ user, query }) => {
-  const today = isDate(query.today) ? query.today : new Date().toISOString().slice(0, 10);
+  const today = isDate(query.today) ? query.today : localDay();
   const monthStart = today.slice(0, 8) + '01';
   const upcoming = listCollabs({ from: today, status: 'active' }, user, 40);
   const r = report({ from: monthStart, to: today.slice(0, 8) + '31' }, user);
@@ -366,8 +372,8 @@ const outletInput = (b) => { const d = { name: str(b.name, 80), district: str(b.
 route('GET', '/api/outlets', ({ user }) => {
   need(user, 'outlet.edit');
   return all(`SELECT o.*, (SELECT COUNT(*) FROM collabs c WHERE c.outlet_id = o.id) collabs,
-      (SELECT COUNT(*) FROM collabs c WHERE c.outlet_id = o.id AND c.date >= date('now') AND c.status NOT IN ('cancelled','no_show')) upcoming
-    FROM outlets o ORDER BY o.active DESC, o.name`);
+      (SELECT COUNT(*) FROM collabs c WHERE c.outlet_id = o.id AND c.date >= ? AND c.status NOT IN ('cancelled','no_show')) upcoming
+    FROM outlets o ORDER BY o.active DESC, o.name`, localDay());
 });
 route('POST', '/api/outlets', ({ user, body }) => {
   need(user, 'outlet.edit'); const d = outletInput(body);
@@ -440,7 +446,7 @@ route('GET', '/api/reports/export.csv', ({ user, query, res }) => {
 route('GET', '/api/share/:token', ({ params, query }) => {
   const o = get('SELECT id, name, district FROM outlets WHERE share_token = ? AND active = 1', str(params.token, 60));
   if (!o) fail(404, 'This link is no longer valid');
-  const from = isDate(query.from) ? query.from : new Date(Date.now() - 7 * 86400e3).toISOString().slice(0, 10);
+  const from = isDate(query.from) ? query.from : localDay(-7);
   const rows = all(`${COLLAB_SELECT} WHERE c.outlet_id = ? AND c.date >= ? AND c.status != 'cancelled' ORDER BY c.date, c.time LIMIT 200`, o.id, from);
   attachItems(rows);
   return { outlet: o, collabs: rows.map((r) => ({ id: r.id, date: r.date, time: r.time, type: r.type, status: r.status, guests: r.guests, deliverables: r.deliverables, notes: r.notes,
