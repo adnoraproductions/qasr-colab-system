@@ -1,18 +1,15 @@
-import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Database layer with one async API over two backends:
+//   • Turso / libSQL (used on Netlify, or anywhere TURSO_DATABASE_URL is set)
+//   • a local SQLite file via Node's built-in node:sqlite (default for `npm start`)
+// Both speak the same SQLite dialect, so every query in the app runs unchanged on either.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
 import { OUTLETS, MENU, DEFAULT_ADMIN } from './seed-data.js';
 import { hashPassword } from './auth.js';
 
-const DB_PATH = process.env.DB_PATH || fileURLToPath(new URL('../data/qasr.db', import.meta.url));
-mkdirSync(dirname(DB_PATH), { recursive: true });
+export const newToken = (n = 18) => randomBytes(n).toString('base64url');
 
-export const db = new DatabaseSync(DB_PATH);
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-
-db.exec(`
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS outlets (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -27,7 +24,7 @@ CREATE TABLE IF NOT EXISTS outlets (
 );
 CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY,
-  category TEXT NOT NULL DEFAULT '', -- unused; kept so older databases still open
+  category TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL,
   price REAL NOT NULL DEFAULT 0,
   sort INTEGER NOT NULL DEFAULT 0,
@@ -104,35 +101,104 @@ CREATE TABLE IF NOT EXISTS activity (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_activity_collab ON activity(collab_id);
-`);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+`;
 
-export const newToken = (n = 18) => randomBytes(n).toString('base64url');
+// ───────────── backends ─────────────
+// Each exposes exec(sql, args) → { rows, lastId }, execScript(sql) and begin() → a transaction.
 
-export function tx(fn) {
-  db.exec('BEGIN');
-  try { const r = fn(); db.exec('COMMIT'); return r; }
-  catch (e) { db.exec('ROLLBACK'); throw e; }
+function libsqlBackend(client) {
+  const shape = (rs) => ({
+    rows: rs.rows.map((r) => Object.fromEntries(rs.columns.map((c, i) => [c, r[i]]))),
+    lastId: rs.lastInsertRowid != null ? Number(rs.lastInsertRowid) : undefined,
+  });
+  return {
+    exec: async (sql, args) => shape(await client.execute({ sql, args })),
+    execScript: (sql) => client.executeMultiple(sql),
+    async begin() {
+      const t = await client.transaction('write');
+      return { exec: async (sql, args) => shape(await t.execute({ sql, args })), commit: () => t.commit(), rollback: () => t.rollback(), close: () => t.close() };
+    },
+  };
 }
 
-function seed() {
-  const hasUsers = db.prepare('SELECT COUNT(*) c FROM users').get().c;
-  if (hasUsers) return;
+async function sqliteFileBackend(path) {
+  const { DatabaseSync } = await import('node:sqlite'); // only loaded for local runs
+  const { mkdirSync } = await import('node:fs');
+  const { dirname } = await import('node:path');
+  mkdirSync(dirname(path), { recursive: true });
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  const exec = async (sql, args) => {
+    const st = db.prepare(sql);
+    if (/^\s*(SELECT|WITH|PRAGMA)/i.test(sql)) return { rows: st.all(...args) };
+    const r = st.run(...args);
+    return { rows: [], lastId: Number(r.lastInsertRowid) };
+  };
+  // One connection is shared by every request, so transactions take turns.
+  let queue = Promise.resolve();
+  return {
+    exec,
+    execScript: async (sql) => db.exec(sql),
+    async begin() {
+      let release; const prev = queue; queue = new Promise((r) => { release = r; }); await prev;
+      db.exec('BEGIN');
+      return { exec, commit: async () => db.exec('COMMIT'), rollback: async () => db.exec('ROLLBACK'), close: () => release() };
+    },
+  };
+}
+
+// ───────────── public API ─────────────
+let backend;
+const txStore = new AsyncLocalStorage();
+const conn = () => txStore.getStore() || backend;
+
+export const all = async (sql, ...args) => (await conn().exec(sql, args)).rows;
+export const get = async (sql, ...args) => (await conn().exec(sql, args)).rows[0];
+export const run = async (sql, ...args) => conn().exec(sql, args);
+
+export async function tx(fn) {
+  if (txStore.getStore()) return fn(); // already inside one
+  const t = await backend.begin();
+  try {
+    const out = await txStore.run(t, fn);
+    await t.commit();
+    return out;
+  } catch (e) {
+    try { await t.rollback(); } catch { /* already closed */ }
+    throw e;
+  } finally { t.close(); }
+}
+
+async function seed() {
+  if ((await get('SELECT COUNT(*) c FROM users')).c) return;
   const fromEnv = !!process.env.ADMIN_PASSWORD;
   const password = process.env.ADMIN_PASSWORD || randomBytes(6).toString('base64url');
-  tx(() => {
-    const insO = db.prepare('INSERT INTO outlets (name, district, share_token) VALUES (?, ?, ?)');
-    for (const [name, district] of OUTLETS) insO.run(name, district, newToken());
-
-    const insP = db.prepare("INSERT INTO products (category, name, price, sort) VALUES ('', ?, ?, ?)");
-    MENU.forEach(([name, price], i) => insP.run(name, price, i));
-    db.prepare('INSERT INTO users (name, username, pass_hash, role) VALUES (?, ?, ?, ?)')
-      .run(DEFAULT_ADMIN.name, DEFAULT_ADMIN.username, hashPassword(password), 'admin');
+  await tx(async () => {
+    for (const [name, district] of OUTLETS) await run('INSERT INTO outlets (name, district, share_token) VALUES (?, ?, ?)', name, district, newToken());
+    for (const [i, [name, price]] of MENU.entries()) await run("INSERT INTO products (category, name, price, sort) VALUES ('', ?, ?, ?)", name, price, i);
+    await run('INSERT INTO users (name, username, pass_hash, role) VALUES (?, ?, ?, ?)', DEFAULT_ADMIN.name, DEFAULT_ADMIN.username, hashPassword(password), 'admin');
   });
   console.log(`\n  First run: seeded ${OUTLETS.length} outlets and the menu.`);
   console.log(`  Sign in as "${DEFAULT_ADMIN.username}" with ${fromEnv ? 'the ADMIN_PASSWORD you set' : `password: ${password}`}`);
   console.log('  Change it from More → Profile after signing in.\n');
 }
-seed();
 
-// Clean expired sessions on boot
-db.prepare("DELETE FROM sessions WHERE expires_at < datetime('now')").run();
+let readyPromise;
+/** Connect, create tables if missing and seed an empty database. Cheap to call on every request. */
+export function ready() {
+  return (readyPromise ||= (async () => {
+    const url = process.env.TURSO_DATABASE_URL;
+    if (url) {
+      // The fetch-based client runs anywhere (Netlify Functions included); file: URLs need the full client.
+      const { createClient } = url.startsWith('file:') ? await import('@libsql/client') : await import('@libsql/client/web');
+      backend = libsqlBackend(createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN }));
+    } else {
+      const { fileURLToPath } = await import('node:url');
+      backend = await sqliteFileBackend(process.env.DB_PATH || fileURLToPath(new URL('../data/qasr.db', import.meta.url)));
+    }
+    await backend.execScript(SCHEMA);
+    await seed();
+    await run("DELETE FROM sessions WHERE expires_at < datetime('now')");
+  })().catch((e) => { readyPromise = null; throw e; }));
+}

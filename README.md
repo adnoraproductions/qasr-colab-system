@@ -2,7 +2,7 @@
 
 A mobile-first web app for managing Qasr Laban's **barter and paid influencer collabs** across all outlets. It covers scheduling, product assignment by the manager, outlet visibility and reporting.
 
-There are no dependencies to install. It runs on Node.js alone and stores everything in one SQLite file.
+It runs on Node.js and stores everything in SQLite: a local file when you run it on your computer, or **Turso** when it's deployed on Netlify.
 
 ## Who uses what
 
@@ -38,6 +38,9 @@ Outlet users never see money (paid amounts, influencer phone numbers).
 Requires **Node.js 22.13 or newer** (check with `node -v`).
 
 ```bash
+npm install
+```
+```bash
 npm start
 ```
 
@@ -56,28 +59,58 @@ After signing in, change it from **More → Profile → Change password**, and a
 | Env var | Default | Purpose |
 |---|---|---|
 | `PORT` | `3000` | HTTP port |
-| `DB_PATH` | `./data/qasr.db` | Database file location |
+| `DB_PATH` | `./data/qasr.db` | Database file location (when not using Turso) |
+| `TURSO_DATABASE_URL` | — | Use a Turso database instead of the local file |
+| `TURSO_AUTH_TOKEN` | — | Turso database token |
 | `COOKIE_SECURE` | off | Set to `1` when served over HTTPS |
 | `APP_TZ` | `Asia/Kolkata` | Time zone used to decide what "today" is |
 | `ADMIN_PASSWORD` | random | Password for the first `admin` login (used only when the database is first created) |
 
-## Deploying
+## Deploying on Netlify + Turso (free)
 
-Any host that runs Node and keeps a **persistent disk** will work: a small VPS (Hetzner, DigitalOcean, Lightsail), Railway or Render with a volume, and so on.
+On Netlify the pages are served as static files, the API runs as a Netlify Function, and the data lives in **Turso**, a hosted SQLite-compatible database. Both have free plans that are plenty for a team this size (check their current limits).
 
-1. Copy the project to the server, then run `npm start` (use `pm2` or systemd to keep it running).
-2. Put it behind HTTPS (Caddy or Nginx) and set `COOKIE_SECURE=1`.
-3. Point `DB_PATH` at the persistent volume.
+### 1. Put the code on GitHub
+The site deploys straight from the GitHub repository, and every later push redeploys it automatically.
 
-Serverless platforms like Vercel or Netlify won't work, because they don't keep the database file.
+### 2. Create the Turso database
+1. Sign up at **turso.tech**.
+2. Create a database. Pick the location closest to Kerala, such as **Mumbai** (`aws-ap-south-1`) if it's offered.
+3. On the database page, copy the **Database URL** (it starts with `libsql://`).
+4. Create a **database token** and copy it. Keep it private, like a password.
 
-**Backups:** everything lives in the one file at `DB_PATH`. Copy it (plus `qasr.db-wal` if present) on a schedule, for example a daily cron job to cloud storage.
+### 3. (Optional) Copy your existing data into Turso
+If you've already been using the app on this computer, copy everything into the new, empty Turso database. Run this once, from the project folder:
+
+```bash
+TURSO_DATABASE_URL='libsql://…' TURSO_AUTH_TOKEN='…' npm run copy-to-turso
+```
+
+Logins keep their passwords, but everyone needs to sign in once on the new site. The script refuses to run if Turso already has data, so it can't overwrite anything. Skip this step to start fresh.
+
+### 4. Create the Netlify site
+1. On **netlify.com**: **Add new site → Import an existing project → GitHub**, then pick this repository.
+2. Leave the build settings as they are. `netlify.toml` already sets everything.
+3. Under **Environment variables**, add:
+   - `TURSO_DATABASE_URL`: the URL from step 2
+   - `TURSO_AUTH_TOKEN`: the token from step 2
+   - `ADMIN_PASSWORD`: only if you skipped step 3. This is the first `admin` login's password.
+4. Click **Deploy**. When it finishes, open the site address Netlify gives you and sign in.
+
+You can connect your own domain later under **Domain management**.
+
+### Other hosts
+Any server that runs Node 22.13+ also works. Run `npm install` and `npm start`. Without `TURSO_DATABASE_URL`, the app keeps its data in the local file at `DB_PATH`, so the server must keep its disk. Back up that file regularly.
 
 ## Project layout
 
 ```
-server.js            HTTP server, REST API, permissions, reports, CSV
-src/db.js            SQLite schema + first-run seeding
+server.js            Local server: static files + API
+netlify.toml         Netlify build, redirects and headers
+netlify/functions/   The API as a Netlify Function
+src/api.js           REST API: routes, permissions, reports, CSV
+src/db.js            Database (local SQLite or Turso), schema, first-run seeding
+scripts/             copy-to-turso.mjs: one-time data copy
 src/auth.js          Password hashing + role permissions
 src/seed-data.js     Outlets, menu & first admin login
 public/              Front-end (no build step)

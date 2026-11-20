@@ -1,15 +1,19 @@
 {
   "name": "qasr-laban-collab",
   "version": "1.0.0",
-  "description": "Qasr Laban — barter & paid influencer collaboration manager",
+  "description": "Qasr Laban \u2014 barter & paid influencer collaboration manager",
   "type": "module",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node --no-warnings server.js",
-    "dev": "node --no-warnings --watch server.js"
+    "dev": "node --no-warnings --watch server.js",
+    "copy-to-turso": "node --no-warnings scripts/copy-to-turso.mjs"
   },
   "engines": {
     "node": ">=22.13"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0"
   }
 }
