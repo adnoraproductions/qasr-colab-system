@@ -1,0 +1,13 @@
+{
+  "name": "Qasr Laban Collabs",
+  "short_name": "QL Collabs",
+  "description": "Barter & paid influencer collaboration manager",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000ADE",
+  "theme_color": "#000ADE",
+  "icons": [
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

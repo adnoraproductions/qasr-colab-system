@@ -1,0 +1,15 @@
+{
+  "name": "qasr-laban-collab",
+  "version": "1.0.0",
+  "description": "Qasr Laban — barter & paid influencer collaboration manager",
+  "type": "module",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "dev": "node --no-warnings --watch server.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
