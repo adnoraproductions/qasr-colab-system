@@ -4,7 +4,7 @@ A mobile-first web app for managing Qasr Laban's **barter and paid influencer co
 
 It runs on Node.js and stores everything in SQLite: a local file when you run it on your computer, or **Turso** when it's deployed on Netlify.
 
-## Who uses what
+## Who uses what    
 
 | Role | Can do |
 |---|---|
