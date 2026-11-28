@@ -184,12 +184,12 @@ export async function listsView(main, params) {
 
       ${L.ready.length ? html`
         <div class="section">
-          <div class="card" style="background:var(--ink);color:#fff;box-shadow:none">
+          <div class="card" style="background:var(--navy);color:#fff;box-shadow:none">
             <div class="row between"><div><div class="bold" style="font-size:17px">Kitchen list</div><div class="small" style="opacity:.65">All outlets · ${L.itemCount} items to prepare</div></div>${icon('box')}</div>
             <div style="margin-top:12px">${L.kitchen.slice(0, 6).map((k) => html`<div class="row between small" style="padding:5px 0;border-top:1px solid rgba(255,255,255,.1)"><span>${k.label}</span><b>× ${k.qty}</b></div>`)}
               ${L.kitchen.length > 6 ? html`<div class="small" style="opacity:.6;padding-top:6px">+ ${L.kitchen.length - 6} more</div>` : ''}</div>
             <div class="row" style="gap:8px;margin-top:14px">
-              <button class="btn sm grow" style="background:#fff;color:var(--ink)" data-share="kitchen">${icon('send', 'sm')}Share image</button>
+              <button class="btn sm grow" style="background:#fff;color:var(--navy)" data-share="kitchen">${icon('send', 'sm')}Share image</button>
               <a class="btn sm" style="background:rgba(255,255,255,.12)" href="${waLink(kitchenText(L, date))}" target="_blank" rel="noopener" aria-label="WhatsApp text">${icon('wa', 'sm')}</a>
               <button class="btn sm" style="background:rgba(255,255,255,.12)" data-dl="kitchen" aria-label="Download image">${icon('download', 'sm')}</button>
             </div>

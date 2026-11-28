@@ -70,7 +70,7 @@ function renderShell() {
       </aside>
       <div>
         <header class="topbar">
-          <div class="logo-chip"><img src="/assets/logo-white.png" alt="" /></div>
+          <img class="wordmark" src="/assets/logo-blue.png" alt="Qasr Laban" />
           <h1 data-title></h1>
         </header>
         <main class="page" data-main></main>
@@ -150,14 +150,19 @@ async function renderShare(token) {
     const t = today();
     const upcoming = d.collabs.filter((c) => c.date >= t);
     const past = d.collabs.filter((c) => c.date < t).reverse();
-    const card = (c) => html`<div class="collab">
-      <div class="c-head"><div class="c-name">${c.inf_name}</div>${c.time ? html`<div class="c-when">${fmtTime(c.time)}</div>` : ''}</div>
-      <div class="c-sub">${[c.inf_handle && '@' + c.inf_handle, c.inf_followers && compact(c.inf_followers) + ' followers', c.guests > 1 && c.guests + ' people'].filter(Boolean).join(' · ')}</div>
-      <div class="c-prod ${c.items.length ? '' : 'warn'}">${c.items.length ? c.items.map((i) => `${i.label}\u00a0×${i.qty}`).join('  ·  ') : 'Products to be confirmed'}</div>
-      ${c.notes ? html`<div class="small muted" style="margin-top:6px">${c.notes}</div>` : ''}
-      <div class="c-foot"><span class="c-type">${c.deliverables || ''}</span>
-        <span class="row" style="gap:8px">${c.inf_url ? html`<a class="small" href="${c.inf_url}" target="_blank" rel="noopener">Profile ${icon('ext', 'xs')}</a>` : ''}${statusPill(c.status)}</span></div>
+    const card = (c) => {
+      const [clock, ampm] = c.time ? fmtTime(c.time).split(' ') : [];
+      return html`<div class="collab">
+      <div class="c-time ${c.time ? '' : 'none'}">${c.time ? html`<b>${clock}</b><span>${ampm}</span>` : html`<b>Any</b><span>time</span>`}</div>
+      <div class="c-body">
+        <div class="c-head"><div class="c-name">${c.inf_name}</div>${statusPill(c.status)}</div>
+        <div class="c-sub">${[c.inf_handle && '@' + c.inf_handle, c.inf_followers && compact(c.inf_followers) + ' followers', c.guests > 1 && c.guests + ' people'].filter(Boolean).join(' · ')}</div>
+        <div class="c-prod ${c.items.length ? '' : 'warn'}">${c.items.length ? c.items.map((i) => `${i.label}\u00a0×${i.qty}`).join('  ·  ') : 'Products to be confirmed'}</div>
+        ${c.notes ? html`<div class="small muted" style="margin-top:6px">${c.notes}</div>` : ''}
+        <div class="c-foot"><span class="c-type">${c.deliverables || ''}</span>${c.inf_url ? html`<a class="small" style="margin-left:auto" href="${c.inf_url}" target="_blank" rel="noopener">Profile ${icon('ext', 'xs')}</a>` : ''}</div>
+      </div>
     </div>`;
+    };
     const byDate = (rows) => Object.entries(groupBy(rows, (c) => c.date)).map(([dt, cs]) => html`<div class="date-h"><b>${relDay(dt)}</b><span>${fmtDate(dt)} · ${cs.length}</span></div>${cs.map(card)}`);
     document.title = `${d.outlet.name} · Qasr Laban Collabs`;
     app.innerHTML = String(html`

@@ -8,18 +8,21 @@ const DELIVERABLES = ['Reel', 'Story', 'Post', 'YouTube', 'Shorts', 'Live'];
 const changed = () => window.dispatchEvent(new Event('ql:changed'));
 
 // ───────────── card ─────────────
+// Agenda-style card: the time sits on the left, everything else on the right.
 export function collabCard(c, { showDate = false, showOutlet = true } = {}) {
   const items = c.items || [];
   const sub = [showOutlet && c.outlet_name, c.inf_handle && '@' + c.inf_handle, c.inf_followers && compact(c.inf_followers) + ' followers'].filter(Boolean).join(' · ');
-  const when = [showDate && relDay(c.date), c.time && fmtTime(c.time)].filter(Boolean).join(' · ');
+  const [clock, ampm] = c.time ? fmtTime(c.time).split(' ') : [];
   return html`
   <button class="collab ${c.status}" data-collab="${c.id}">
-    <div class="c-head"><div class="c-name">${c.inf_name}</div>${when ? html`<div class="c-when">${when}</div>` : ''}</div>
-    ${sub ? html`<div class="c-sub">${sub}</div>` : ''}
-    <div class="c-prod ${items.length ? '' : 'warn'}">${items.length ? items.map((i) => `${i.label}\u00a0×${i.qty}`).join('  ·  ') : 'Products not assigned yet'}</div>
-    <div class="c-foot">
-      ${c.type === 'paid' ? html`<span class="c-type paid">${icon('rupee', 'xs')}Paid${c.amount ? ' · ' + inr(c.amount) : ''}</span>` : html`<span class="c-type">${icon('gift', 'xs')}Barter</span>`}
-      ${statusPill(c.status)}
+    <div class="c-time ${c.time ? '' : 'none'}">${c.time ? html`<b>${clock}</b><span>${ampm}</span>` : html`<b>Any</b><span>time</span>`}${showDate ? html`<span>${relDay(c.date)}</span>` : ''}</div>
+    <div class="c-body">
+      <div class="c-head"><div class="c-name">${c.inf_name}</div>${statusPill(c.status)}</div>
+      ${sub ? html`<div class="c-sub">${sub}</div>` : ''}
+      <div class="c-prod ${items.length ? '' : 'warn'}">${items.length ? items.map((i) => `${i.label}\u00a0×${i.qty}`).join('  ·  ') : 'Products not assigned yet'}</div>
+      <div class="c-foot">
+        ${c.type === 'paid' ? html`<span class="c-type paid">${icon('rupee', 'xs')}Paid${c.amount ? ' · ' + inr(c.amount) : ''}</span>` : html`<span class="c-type">${icon('gift', 'xs')}Barter</span>`}
+      </div>
     </div>
   </button>`;
 }
