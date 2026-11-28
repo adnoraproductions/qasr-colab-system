@@ -9,7 +9,8 @@
     "start": "node --no-warnings server.js",
     "dev": "node --no-warnings --watch server.js",
     "copy-to-turso": "node --no-warnings scripts/copy-to-turso.mjs",
-    "check-turso": "node --no-warnings scripts/check-turso.mjs"
+    "check-turso": "node --no-warnings scripts/check-turso.mjs",
+    "reset-password": "node --no-warnings scripts/reset-password.mjs"
   },
   "engines": {
     "node": ">=22.13"

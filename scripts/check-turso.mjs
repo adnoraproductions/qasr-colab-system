@@ -5,11 +5,18 @@ import { createClient } from '@libsql/client/web';
 
 const clean = (v) => (v || '').trim().replace(/^["']+|["']+$/g, '').trim();
 
+// One reader for every question, so answers typed (or pasted) ahead are never lost.
+const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: !!process.stdin.isTTY });
+const lines = []; const waiting = [];
+rl.on('line', (l) => (waiting.length ? waiting.shift()(l) : lines.push(l)));
+let mute = false;
+const write = rl._writeToOutput.bind(rl);
+rl._writeToOutput = (s) => { if (!mute) write(s); };
 async function ask(question, hidden = false) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-  if (hidden) rl._writeToOutput = (s) => { if (s.includes(question)) rl.output.write(s); };
-  const answer = await new Promise((res) => rl.question(question, res));
-  rl.close(); if (hidden) process.stdout.write('\n');
+  process.stdout.write(question);
+  mute = hidden;
+  const answer = lines.length ? lines.shift() : await new Promise((res) => waiting.push(res));
+  mute = false; if (hidden) process.stdout.write('\n');
   return answer;
 }
 
@@ -43,3 +50,4 @@ const client = createClient({ url, authToken: token });
 for (const [name, fn] of [['simple query', () => client.execute('SELECT 1')], ['multi-statement', () => client.executeMultiple('SELECT 1; SELECT 2;')], ['transaction', async () => { const t = await client.transaction('write'); await t.execute('SELECT 1'); await t.commit(); t.close(); }]]) {
   try { await fn(); console.log(`   ${name}: OK`); } catch (e) { console.log(`   ${name}: FAILED — ${e.code || ''} ${e.message}`); }
 }
+process.exit(0);
