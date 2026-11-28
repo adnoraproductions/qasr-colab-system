@@ -115,9 +115,10 @@ async function route({ keepScroll = false } = {}) {
 
 async function start() {
   try {
-    const me = await api('/me');
+    // Ask for the login and the app's lookup data together: one wait instead of two.
+    const [me, lookups] = await Promise.all([api('/me'), api('/bootstrap')]);
     state.user = me.user; state.perms = me.perms;
-    await loadLookups();
+    Object.assign(state, lookups);
   } catch { state.user = null; return renderLogin(); }
   renderShell();
   route();

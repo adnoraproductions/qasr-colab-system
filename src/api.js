@@ -38,7 +38,9 @@ const COLLAB_SELECT = `
          i.name inf_name, i.handle inf_handle, i.profile_url inf_url, i.followers inf_followers, i.platform inf_platform, i.phone inf_phone,
          cu.name created_by_name, au.name assigned_by_name,
          (SELECT COALESCE(SUM(qty * price), 0) FROM collab_items WHERE collab_id = c.id) product_value,
-         (SELECT COALESCE(SUM(qty), 0) FROM collab_items WHERE collab_id = c.id) item_count
+         (SELECT COALESCE(SUM(qty), 0) FROM collab_items WHERE collab_id = c.id) item_count,
+         (SELECT json_group_array(json_object('id', id, 'collab_id', collab_id, 'product_id', product_id, 'label', label, 'price', price, 'qty', qty))
+            FROM (SELECT * FROM collab_items WHERE collab_id = c.id ORDER BY id)) items_json
   FROM collabs c
   JOIN outlets o ON o.id = c.outlet_id
   JOIN influencers i ON i.id = c.influencer_id
@@ -59,15 +61,9 @@ function collabFilters(q, user) {
   return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', p };
 }
 
-async function attachItems(rows) {
-  if (!rows.length) return rows;
-  const ids = rows.map((r) => r.id);
-  const map = new Map(ids.map((id) => [id, []]));
-  for (let i = 0; i < ids.length; i += 500) { // stay under SQLite's parameter limit
-    const chunk = ids.slice(i, i + 500);
-    for (const it of await all(`SELECT * FROM collab_items WHERE collab_id IN (${chunk.map(() => '?').join(',')}) ORDER BY id`, ...chunk)) map.get(it.collab_id).push(it);
-  }
-  for (const r of rows) r.items = map.get(r.id);
+// Products arrive as JSON inside each collab row, so a list needs a single database round trip.
+function withItems(rows) {
+  for (const r of rows) { r.items = r.items_json ? JSON.parse(r.items_json) : []; delete r.items_json; }
   return rows;
 }
 
@@ -81,15 +77,18 @@ async function listCollabs(q, user, limit = 1000) {
   const f = collabFilters(q, user);
   const order = q.order === 'desc' ? 'DESC' : 'ASC';
   const rows = await all(`${COLLAB_SELECT}${f.sql} ORDER BY c.date ${order}, c.time ${order}, c.id ${order} LIMIT ${limit}`, ...f.p);
-  return mask(await attachItems(rows), user);
+  return mask(withItems(rows), user);
 }
 
 async function getCollab(id, user) {
-  const row = await get(`${COLLAB_SELECT} WHERE c.id = ?`, id);
+  const [row, activity] = await Promise.all([
+    get(`${COLLAB_SELECT} WHERE c.id = ?`, id),
+    all('SELECT a.action, a.created_at, u.name user_name FROM activity a LEFT JOIN users u ON u.id = a.user_id WHERE a.collab_id = ? ORDER BY a.id DESC LIMIT 50', id),
+  ]);
   if (!row) fail(404, 'Collab not found');
   if (user.role === 'outlet' && row.outlet_id !== user.outlet_id) fail(404, 'Collab not found');
-  await attachItems([row]);
-  row.activity = await all('SELECT a.action, a.created_at, u.name user_name FROM activity a LEFT JOIN users u ON u.id = a.user_id WHERE a.collab_id = ? ORDER BY a.id DESC LIMIT 50', id);
+  withItems([row]);
+  row.activity = activity;
   return mask([row], user)[0];
 }
 
@@ -251,20 +250,26 @@ route('POST', '/api/me/password', async ({ user, body }) => {
 });
 
 // Lookup data the app needs everywhere
-route('GET', '/api/bootstrap', async ({ user }) => ({
-  outlets: await all(`SELECT id, name, district, active${can(user, 'outlet.edit') ? ', address, phone, manager_name, maps_url, share_token' : ''} FROM outlets ORDER BY active DESC, name`),
-  products: await all('SELECT * FROM products ORDER BY active DESC, sort, id'),
-  influencers: can(user, 'influencer.edit') ? await all('SELECT id, name, handle, platform, profile_url, followers, phone FROM influencers ORDER BY name COLLATE NOCASE') : [],
-}));
+route('GET', '/api/bootstrap', async ({ user }) => {
+  const [outlets, products, influencers] = await Promise.all([
+    all(`SELECT id, name, district, active${can(user, 'outlet.edit') ? ', address, phone, manager_name, maps_url, share_token' : ''} FROM outlets ORDER BY active DESC, name`),
+    all('SELECT * FROM products ORDER BY active DESC, sort, id'),
+    can(user, 'influencer.edit') ? all('SELECT id, name, handle, platform, profile_url, followers, phone FROM influencers ORDER BY name COLLATE NOCASE') : [],
+  ]);
+  return { outlets, products, influencers };
+});
 
 // Dashboard summary
 route('GET', '/api/dashboard', async ({ user, query }) => {
   const today = isDate(query.today) ? query.today : localDay();
   const monthStart = today.slice(0, 8) + '01';
-  const upcoming = await listCollabs({ from: today, status: 'active' }, user, 40);
-  const r = await report({ from: monthStart, to: today.slice(0, 8) + '31' }, user);
+  const [upcoming, r, pending] = await Promise.all([
+    listCollabs({ from: today, status: 'active' }, user, 40),
+    report({ from: monthStart, to: today.slice(0, 8) + '31' }, user),
+    can(user, 'collab.status') ? get("SELECT COUNT(*) n FROM collabs WHERE status = 'completed'") : { n: 0 },
+  ]);
   const needsItems = can(user, 'collab.items') ? upcoming.filter((c) => !c.items.length).length : 0;
-  const pendingPosts = can(user, 'collab.status') ? (await listCollabs({ status: 'completed' }, user, 200)).length : 0;
+  const pendingPosts = Number(pending.n);
   return { today, upcoming, month: { totals: r.totals, statusCounts: r.statusCounts, topOutlets: r.byOutlet.slice(0, 5) }, needsItems, pendingPosts };
 });
 
@@ -444,7 +449,7 @@ route('GET', '/api/share/:token', async ({ params, query }) => {
   const o = await get('SELECT id, name, district FROM outlets WHERE share_token = ? AND active = 1', str(params.token, 60));
   if (!o) fail(404, 'This link is no longer valid');
   const from = isDate(query.from) ? query.from : localDay(-7);
-  const rows = await attachItems(await all(`${COLLAB_SELECT} WHERE c.outlet_id = ? AND c.date >= ? AND c.status != 'cancelled' ORDER BY c.date, c.time LIMIT 200`, o.id, from));
+  const rows = withItems(await all(`${COLLAB_SELECT} WHERE c.outlet_id = ? AND c.date >= ? AND c.status != 'cancelled' ORDER BY c.date, c.time LIMIT 200`, o.id, from));
   return { outlet: o, collabs: rows.map((r) => ({ id: r.id, date: r.date, time: r.time, type: r.type, status: r.status, guests: r.guests, deliverables: r.deliverables, notes: r.notes,
     inf_name: r.inf_name, inf_handle: r.inf_handle, inf_url: r.inf_url, inf_followers: r.inf_followers, items: r.items.map((i) => ({ label: i.label, qty: i.qty })) })) };
 }, { auth: false });

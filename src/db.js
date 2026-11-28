@@ -203,6 +203,6 @@ export function ready() {
     }
     await backend.execScript(SCHEMA);
     await seed();
-    await run("DELETE FROM sessions WHERE expires_at < datetime('now')");
+    if (Math.random() < 0.1) await run("DELETE FROM sessions WHERE expires_at < datetime('now')");
   })().catch((e) => { readyPromise = null; throw e; }));
 }
