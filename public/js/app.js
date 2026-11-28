@@ -34,14 +34,21 @@ const parseHash = () => {
 function renderLogin() {
   app.innerHTML = String(html`
     <div class="login">
-      <div class="top"><img src="/assets/logo-white.png" alt="Qasr Laban" /><p>Collab Manager · Barter & Paid</p></div>
+      <aside class="login-brand">
+        <img class="badge" src="/assets/logo-badge.png" alt="Qasr Laban" />
+        <div class="login-copy">
+          <h1>Collab Manager</h1>
+          <p>Barter and paid influencer collabs for every Qasr Laban outlet.</p>
+        </div>
+      </aside>
       <form data-login>
-        <h2>Welcome back</h2>
-        <p class="muted small" style="margin:0 0 18px">Sign in with the login given by your manager.</p>
+        <h2>Sign in</h2>
+        <p class="login-sub">Use the login given by your manager.</p>
         <label class="field"><span>Username</span><input class="input" name="username" autocomplete="username" autocapitalize="none" required /></label>
         <label class="field"><span>Password</span><input class="input" name="password" type="password" autocomplete="current-password" required /></label>
         <div class="err" data-err></div>
         <button class="btn block" style="margin-top:8px">Sign in</button>
+        <p class="login-help">Forgot your password? Ask your manager to reset it.</p>
       </form>
     </div>`);
   const f = app.querySelector('[data-login]');
