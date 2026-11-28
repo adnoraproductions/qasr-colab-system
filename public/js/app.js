@@ -1,4 +1,4 @@
-import { state, can, api, html, icon, initials, loadLookups, toast, oops, closeAllSheets, ROLE, relDay, fmtDate, fmtTime, compact, groupBy, today, statusPill, emptyState } from './lib.js';
+import { state, can, api, clearCache, html, icon, initials, loadLookups, toast, oops, closeAllSheets, ROLE, relDay, fmtDate, fmtTime, compact, groupBy, today, statusPill, emptyState } from './lib.js';
 import { openCollabForm } from './collab.js';
 import { dashboardView, scheduleView } from './views.js';
 import { listsView } from './lists.js';
@@ -126,7 +126,22 @@ async function start() {
 
 window.addEventListener('hashchange', () => { closeAllSheets(); route(); });
 window.addEventListener('ql:changed', () => route({ keepScroll: true }));
-window.addEventListener('ql:logout', () => { if (state.user) { state.user = null; closeAllSheets(); toast('Session expired — please sign in again', 'err'); renderLogin(); } });
+// Background refresh brought newer data than the saved copy on screen: update quietly.
+let refreshTimer;
+window.addEventListener('ql:refreshed', (e) => {
+  const { path, data } = e.detail;
+  if (path === '/bootstrap') Object.assign(state, data);
+  if (path === '/me') { state.user = data.user; state.perms = data.perms; }
+  if (!state.user) return;
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    // Don't redraw under someone who is typing in a search or filter box
+    const a = document.activeElement;
+    if (a && a.closest('[data-main]') && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
+    route({ keepScroll: true });
+  }, 120);
+});
+window.addEventListener('ql:logout', () => { clearCache(); if (state.user) { state.user = null; closeAllSheets(); toast('Session expired — please sign in again', 'err'); renderLogin(); } });
 
 // ───────────── public outlet link (/o/:token) ─────────────
 async function renderShare(token) {

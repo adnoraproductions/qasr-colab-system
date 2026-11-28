@@ -5,7 +5,7 @@ export const state = { user: null, perms: [], outlets: [], products: [], influen
 export const can = (p) => state.perms.includes(p);
 
 // ───── api ─────
-export async function api(path, opts = {}) {
+async function request(path, opts = {}) {
   const res = await fetch('/api' + path, {
     method: opts.method || 'GET',
     headers: opts.body ? { 'Content-Type': 'application/json' } : {},
@@ -15,6 +15,66 @@ export async function api(path, opts = {}) {
   if (res.status === 401 && !path.startsWith('/login') && !path.startsWith('/share')) { location.hash = ''; window.dispatchEvent(new Event('ql:logout')); }
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text();
   if (!res.ok) throw new Error(data?.error || 'Request failed');
+  return data;
+}
+
+// Instant loading: every screen's last data is kept on this device. A screen opens straight
+// from that copy and is refreshed in the background; if anything changed, the app re-draws
+// (event "ql:refreshed"). Any change you make clears the copy, so you never act on old data.
+const CACHE_KEY = 'ql-cache-v1';
+const NO_CACHE = /^\/(login|logout|share|me\/password|reports\/export)/;
+const FRESH_MS = 3000;
+let cache = {};
+let generation = 0; // bumps whenever the copy is cleared
+try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') || {}; } catch { cache = {}; }
+let saveTimer;
+function persist() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const keys = Object.keys(cache).sort((a, b) => cache[b].t - cache[a].t);
+    for (const k of keys.slice(40)) delete cache[k]; // keep the 40 most recent screens
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch { try { localStorage.removeItem(CACHE_KEY); } catch { /* storage blocked */ } }
+  }, 300);
+}
+function remember(path, data) {
+  const s = JSON.stringify(data);
+  if (s.length > 400_000) return; // very large reports are not worth keeping
+  cache[path] = { t: Date.now(), s };
+  persist();
+}
+export function clearCache() {
+  cache = {}; generation++;
+  try { localStorage.removeItem(CACHE_KEY); } catch { /* storage blocked */ }
+}
+const inFlight = new Set();
+function revalidate(path) {
+  if (inFlight.has(path)) return;
+  inFlight.add(path);
+  const gen = generation;
+  request(path).then((data) => {
+    if (gen !== generation) return; // something was changed meanwhile; that data is already out of date
+    const s = JSON.stringify(data);
+    const changed = cache[path]?.s !== s;
+    remember(path, data);
+    if (changed) window.dispatchEvent(new CustomEvent('ql:refreshed', { detail: { path, data } }));
+  }).catch(() => { /* offline or signed out: keep showing the saved copy */ }).finally(() => inFlight.delete(path));
+}
+
+export async function api(path, opts = {}) {
+  const method = opts.method || 'GET';
+  if (method !== 'GET') {
+    const data = await request(path, opts);
+    clearCache();
+    return data;
+  }
+  if (NO_CACHE.test(path) || opts.fresh) return request(path, opts);
+  const hit = cache[path];
+  if (hit) {
+    if (Date.now() - hit.t > FRESH_MS) revalidate(path);
+    return JSON.parse(hit.s); // a fresh copy, so screens can't change the saved one
+  }
+  const data = await request(path, opts);
+  remember(path, data);
   return data;
 }
 

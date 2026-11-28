@@ -22,12 +22,24 @@ const url = (v) => { const s = str(v, 600); if (!s) return ''; return /^https?:\
 
 const cookies = (header) => Object.fromEntries((header || '').split(';').map((c) => c.trim().split('=')).filter((p) => p[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]));
 
+// Signed-in users are remembered for a minute so most requests skip the session lookup.
+// Any change to logins clears this; on a hosting platform with several copies of the server
+// running, a disabled login can keep working for up to a minute on another copy.
+const SESSION_CACHE_MS = 60_000;
+const sessionCache = new Map();
+const forgetSessions = () => sessionCache.clear();
+
 async function currentUser(cookieHeader) {
   const token = cookies(cookieHeader).ql_session;
   if (!token) return null;
-  return (await get(`SELECT u.id, u.name, u.username, u.role, u.outlet_id, o.name outlet_name
+  const hit = sessionCache.get(token);
+  if (hit && hit.until > Date.now()) return { ...hit.user };
+  const user = (await get(`SELECT u.id, u.name, u.username, u.role, u.outlet_id, o.name outlet_name
               FROM sessions s JOIN users u ON u.id = s.user_id LEFT JOIN outlets o ON o.id = u.outlet_id
               WHERE s.token = ? AND s.expires_at > datetime('now') AND u.active = 1 AND u.role IN ('admin','social','outlet')`, token)) || null;
+  if (user) { if (sessionCache.size > 2000) sessionCache.clear(); sessionCache.set(token, { user, until: Date.now() + SESSION_CACHE_MS }); }
+  else sessionCache.delete(token);
+  return user ? { ...user } : null;
 }
 
 const log = (collabId, userId, action) => run('INSERT INTO activity (collab_id, user_id, action) VALUES (?, ?, ?)', collabId, userId, action);
@@ -199,6 +211,35 @@ async function report(q, user) {
   return { totals, statusCounts, byOutlet, byInfluencer, byProduct, byDay, rows };
 }
 
+// Home screen month summary, added up by the database instead of loading every collab.
+async function monthSummary(from, to, user) {
+  const scoped = user.role === 'outlet';
+  const args = scoped ? [from, to, user.outlet_id || -1] : [from, to];
+  const m = `WITH m AS (
+      SELECT c.status, c.type, c.amount, c.outlet_id, c.influencer_id, i.followers,
+             c.status NOT IN ('cancelled','no_show') live,
+             (SELECT COALESCE(SUM(qty * price), 0) FROM collab_items WHERE collab_id = c.id) pv,
+             (SELECT COALESCE(SUM(qty), 0) FROM collab_items WHERE collab_id = c.id) iq
+      FROM collabs c JOIN influencers i ON i.id = c.influencer_id
+      WHERE c.date >= ? AND c.date <= ?${scoped ? ' AND c.outlet_id = ?' : ''})`;
+  const [t, statuses, top] = await Promise.all([
+    get(`${m} SELECT COUNT(*) collabs, COALESCE(SUM(live), 0) active,
+        COALESCE(SUM(live AND type = 'barter'), 0) barter, COALESCE(SUM(live AND type = 'paid'), 0) paid,
+        COALESCE(SUM(CASE WHEN live THEN pv END), 0) product_value, COALESCE(SUM(CASE WHEN live THEN amount END), 0) paid_amount,
+        COALESCE(SUM(CASE WHEN live THEN iq END), 0) items, COALESCE(SUM(CASE WHEN live THEN followers END), 0) reach,
+        COUNT(DISTINCT CASE WHEN live THEN influencer_id END) influencers FROM m`, ...args),
+    all(`${m} SELECT status, COUNT(*) n FROM m GROUP BY status`, ...args),
+    all(`${m} SELECT o.id, o.name, COUNT(*) count, SUM(m.pv + m.amount) total FROM m JOIN outlets o ON o.id = m.outlet_id
+        WHERE m.live GROUP BY o.id ORDER BY count DESC, total DESC LIMIT 5`, ...args),
+  ]);
+  const totals = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, Number(v) || 0]));
+  totals.investment = totals.product_value + totals.paid_amount;
+  const statusCounts = Object.fromEntries(STATUSES.map((st) => [st, Number(statuses.find((r) => r.status === st)?.n || 0)]));
+  totals.posted = statusCounts.posted;
+  if (!can(user, 'collab.money')) { delete totals.paid_amount; delete totals.investment; }
+  return { totals, statusCounts, topOutlets: top.map((o) => ({ id: o.id, name: o.name, count: Number(o.count) })) };
+}
+
 function csv(rows) {
   const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const head = ['Date', 'Time', 'Outlet', 'District', 'Influencer', 'Handle', 'Profile link', 'Followers', 'Type', 'Status', 'Products', 'Item qty', 'Product value', 'Paid amount', 'Payment', 'Total cost', 'Deliverables', 'Post link', 'Notes', 'Created by', 'Assigned by'];
@@ -236,7 +277,7 @@ route('POST', '/api/login', async ({ req, body }) => {
 }, { auth: false });
 
 route('POST', '/api/logout', async ({ req }) => {
-  const t = cookies(req.cookie).ql_session; if (t) await run('DELETE FROM sessions WHERE token = ?', t);
+  const t = cookies(req.cookie).ql_session; if (t) { sessionCache.delete(t); await run('DELETE FROM sessions WHERE token = ?', t); }
   return raw(JSON.stringify({ ok: true }), { 'Set-Cookie': `ql_session=; Path=/; HttpOnly; Max-Age=0${req.secure ? '; Secure' : ''}` });
 }, { auth: false });
 
@@ -246,6 +287,7 @@ route('POST', '/api/me/password', async ({ user, body }) => {
   if (!verifyPassword(body.current || '', u.pass_hash)) fail(400, 'Current password is incorrect');
   if (str(body.next).length < 6) fail(400, 'New password must be at least 6 characters');
   await run('UPDATE users SET pass_hash = ? WHERE id = ?', hashPassword(body.next), user.id);
+  forgetSessions();
   return { ok: true };
 });
 
@@ -263,14 +305,14 @@ route('GET', '/api/bootstrap', async ({ user }) => {
 route('GET', '/api/dashboard', async ({ user, query }) => {
   const today = isDate(query.today) ? query.today : localDay();
   const monthStart = today.slice(0, 8) + '01';
-  const [upcoming, r, pending] = await Promise.all([
+  const [upcoming, month, pending] = await Promise.all([
     listCollabs({ from: today, status: 'active' }, user, 40),
-    report({ from: monthStart, to: today.slice(0, 8) + '31' }, user),
+    monthSummary(monthStart, today.slice(0, 8) + '31', user),
     can(user, 'collab.status') ? get("SELECT COUNT(*) n FROM collabs WHERE status = 'completed'") : { n: 0 },
   ]);
   const needsItems = can(user, 'collab.items') ? upcoming.filter((c) => !c.items.length).length : 0;
   const pendingPosts = Number(pending.n);
-  return { today, upcoming, month: { totals: r.totals, statusCounts: r.statusCounts, topOutlets: r.byOutlet.slice(0, 5) }, needsItems, pendingPosts };
+  return { today, upcoming, month, needsItems, pendingPosts };
 });
 
 route('GET', '/api/collabs', ({ user, query }) => listCollabs(query, user));
@@ -372,6 +414,7 @@ route('POST', '/api/outlets', async ({ user, body }) => {
 route('PUT', '/api/outlets/:id', async ({ user, body, params }) => {
   need(user, 'outlet.edit'); const d = outletInput(body);
   await run('UPDATE outlets SET name=?, district=?, address=?, phone=?, manager_name=?, maps_url=?, active=? WHERE id=?', d.name, d.district, d.address, d.phone, d.manager_name, d.maps_url, d.active, num(params.id));
+  forgetSessions();
   return get('SELECT * FROM outlets WHERE id = ?', num(params.id));
 });
 route('POST', '/api/outlets/:id/token', async ({ user, params }) => { need(user, 'outlet.edit'); await run('UPDATE outlets SET share_token = ? WHERE id = ?', newToken(), num(params.id)); return get('SELECT * FROM outlets WHERE id = ?', num(params.id)); });
@@ -379,6 +422,7 @@ route('DELETE', '/api/outlets/:id', async ({ user, params }) => {
   need(user, 'outlet.edit'); const id = num(params.id);
   if (await get('SELECT id FROM collabs WHERE outlet_id = ? LIMIT 1', id)) fail(400, 'This outlet has collabs. Mark it inactive instead.');
   await tx(async () => { await run('UPDATE users SET outlet_id = NULL, active = 0 WHERE outlet_id = ?', id); await run('DELETE FROM outlets WHERE id = ?', id); });
+  forgetSessions();
   return { ok: true };
 });
 
@@ -415,6 +459,7 @@ route('POST', '/api/users', async ({ user, body }) => {
   if (str(body.password).length < 6) fail(400, 'Password must be at least 6 characters');
   if (await get('SELECT id FROM users WHERE username = ?', d.username)) fail(400, 'Username already taken');
   await run('INSERT INTO users (name, username, pass_hash, role, outlet_id, active) VALUES (?,?,?,?,?,?)', d.name, d.username, hashPassword(body.password), d.role, d.outlet_id, d.active);
+  forgetSessions();
   return { ok: true };
 });
 route('PUT', '/api/users/:id', async ({ user, body, params }) => {
@@ -427,12 +472,14 @@ route('PUT', '/api/users/:id', async ({ user, body, params }) => {
     if (str(body.password)) { await run('UPDATE users SET pass_hash = ? WHERE id = ?', hashPassword(body.password), id); await run('DELETE FROM sessions WHERE user_id = ?', id); }
     if (!d.active) await run('DELETE FROM sessions WHERE user_id = ?', id);
   });
+  forgetSessions();
   return { ok: true };
 });
 route('DELETE', '/api/users/:id', async ({ user, params }) => {
   need(user, 'user.edit'); const id = num(params.id);
   if (id === user.id) fail(400, 'You cannot delete yourself');
   await tx(async () => { await run('DELETE FROM sessions WHERE user_id = ?', id); await run('DELETE FROM users WHERE id = ?', id); });
+  forgetSessions();
   return { ok: true };
 });
 

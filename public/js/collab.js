@@ -46,10 +46,20 @@ function shareText(c) {
 
 // ───────────── detail ─────────────
 export async function openCollab(id, onChange) {
-  const s = openSheet({ title: 'Collab', body: html`<div class="empty">Loading…</div>` });
+  // Keep the open sheet current when a background refresh brings newer data for this collab
+  const onRefreshed = (e) => { if (e.detail.path === `/collabs/${id}` && c) { c = e.detail.data; render(); } };
+  window.addEventListener('ql:refreshed', onRefreshed);
+  const s = openSheet({ title: 'Collab', body: html`<div class="empty">Loading…</div>`, onClose: () => window.removeEventListener('ql:refreshed', onRefreshed) });
   let c;
   const refresh = async () => { c = await api(`/collabs/${id}`); render(); };
-  const patch = async (body, msg) => { try { c = await api(`/collabs/${id}`, { method: 'PATCH', body }); render(); if (msg) toast(msg); onChange?.(); changed(); } catch (e) { oops(e); } };
+  // Instant updates: show the change straight away, confirm with the server, undo if it fails
+  const patch = async (body, msg) => {
+    const before = c;
+    c = { ...c, ...body }; render();
+    if (msg) toast(msg);
+    try { c = await api(`/collabs/${id}`, { method: 'PATCH', body }); render(); onChange?.(); changed(); }
+    catch (e) { c = before; render(); oops(e); }
+  };
 
   function render() {
     const items = c.items || [];
