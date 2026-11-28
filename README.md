@@ -2,9 +2,9 @@
 
 A mobile-first web app for managing Qasr Laban's **barter and paid influencer collabs** across all outlets. It covers scheduling, product assignment by the manager, outlet visibility and reporting.
 
-It runs on Node.js and stores everything in SQLite: a local file when you run it on your computer, or **Turso** when it's deployed on Netlify.
+It runs on Node.js and stores everything in SQLite: a local file when you run it on your computer, or **Turso** when it's deployed on Vercel.
 
-## Who uses what    
+## Who uses what
 
 | Role | Can do |
 |---|---|
@@ -66,12 +66,12 @@ After signing in, change it from **More → Profile → Change password**, and a
 | `APP_TZ` | `Asia/Kolkata` | Time zone used to decide what "today" is |
 | `ADMIN_PASSWORD` | random | Password for the first `admin` login (used only when the database is first created) |
 
-## Deploying on Netlify + Turso (free)
+## Deploying on Vercel + Turso (free)
 
-On Netlify the pages are served as static files, the API runs as a Netlify Function, and the data lives in **Turso**, a hosted SQLite-compatible database. Both have free plans that are plenty for a team this size (check their current limits).
+On Vercel the pages are served as static files, the API runs as a Vercel Function, and the data lives in **Turso**, a hosted SQLite-compatible database. Both have free plans that are plenty for a team this size (check their current limits).
 
 ### 1. Put the code on GitHub
-The site deploys straight from the GitHub repository, and every later push redeploys it automatically.
+The site deploys straight from the GitHub repository, and every later push to `main` redeploys it automatically.
 
 ### 2. Create the Turso database
 1. Sign up at **turso.tech**.
@@ -88,16 +88,16 @@ TURSO_DATABASE_URL='libsql://…' TURSO_AUTH_TOKEN='…' npm run copy-to-turso
 
 Logins keep their passwords, but everyone needs to sign in once on the new site. The script refuses to run if Turso already has data, so it can't overwrite anything. Skip this step to start fresh.
 
-### 4. Create the Netlify site
-1. On **netlify.com**: **Add new site → Import an existing project → GitHub**, then pick this repository.
-2. Leave the build settings as they are. `netlify.toml` already sets everything.
-3. Under **Environment variables**, add:
+### 4. Create the Vercel project
+1. On **vercel.com**: **Add New → Project**, then import this GitHub repository.
+2. Leave **Framework Preset** as **Other** and the build settings empty. `vercel.json` already sets everything.
+3. Under **Environment Variables**, add:
    - `TURSO_DATABASE_URL`: the URL from step 2
    - `TURSO_AUTH_TOKEN`: the token from step 2
    - `ADMIN_PASSWORD`: only if you skipped step 3. This is the first `admin` login's password.
-4. Click **Deploy**. When it finishes, open the site address Netlify gives you and sign in.
+4. Click **Deploy**. When it finishes, open the `….vercel.app` address and sign in.
 
-You can connect your own domain later under **Domain management**.
+You can connect your own domain later under **Settings → Domains**. If you add or change an environment variable later, redeploy for it to take effect.
 
 ### Other hosts
 Any server that runs Node 22.13+ also works. Run `npm install` and `npm start`. Without `TURSO_DATABASE_URL`, the app keeps its data in the local file at `DB_PATH`, so the server must keep its disk. Back up that file regularly.
@@ -106,8 +106,8 @@ Any server that runs Node 22.13+ also works. Run `npm install` and `npm start`. 
 
 ```
 server.js            Local server: static files + API
-netlify.toml         Netlify build, redirects and headers
-netlify/functions/   The API as a Netlify Function
+vercel.json          Vercel build, rewrites and headers
+api/index.mjs        The API as a Vercel Function
 src/api.js           REST API: routes, permissions, reports, CSV
 src/db.js            Database (local SQLite or Turso), schema, first-run seeding
 scripts/             copy-to-turso.mjs: one-time data copy

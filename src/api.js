@@ -1,5 +1,5 @@
 // The whole REST API, independent of any web server. Both the local Node server (server.js)
-// and the Netlify Function (netlify/functions/api.mjs) call handle() with a plain request object.
+// and the Vercel Function (api/index.mjs) call handle() with a plain request object.
 import { all, get, run, tx, ready, newToken } from './db.js';
 import { hashPassword, verifyPassword, can, PERMS } from './auth.js';
 

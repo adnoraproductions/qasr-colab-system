@@ -1,5 +1,5 @@
 // Local / self-hosted server: serves the front-end from public/ and the API from src/api.js.
-// On Netlify this file is not used — netlify/functions/api.mjs serves the API instead.
+// On Vercel this file is not used — api/index.mjs serves the API instead.
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';

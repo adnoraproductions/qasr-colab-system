@@ -1,5 +1,5 @@
 // Database layer with one async API over two backends:
-//   • Turso / libSQL (used on Netlify, or anywhere TURSO_DATABASE_URL is set)
+//   • Turso / libSQL (used on Vercel, or anywhere TURSO_DATABASE_URL is set)
 //   • a local SQLite file via Node's built-in node:sqlite (default for `npm start`)
 // Both speak the same SQLite dialect, so every query in the app runs unchanged on either.
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -190,7 +190,7 @@ export function ready() {
   return (readyPromise ||= (async () => {
     const url = process.env.TURSO_DATABASE_URL;
     if (url) {
-      // The fetch-based client runs anywhere (Netlify Functions included); file: URLs need the full client.
+      // The fetch-based client runs anywhere (Vercel Functions included); file: URLs need the full client.
       const { createClient } = url.startsWith('file:') ? await import('@libsql/client') : await import('@libsql/client/web');
       backend = libsqlBackend(createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN }));
     } else {
