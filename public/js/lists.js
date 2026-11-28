@@ -4,6 +4,8 @@ import { state, api, html, icon, compact, fmtDate, fmtTime, relDay, today, addDa
 
 const ACTIVE = (c) => !['cancelled', 'no_show'].includes(c.status);
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const countLabel = (L) => `${plural(L.ready.length, 'collab')} · ${plural(L.outlets.length, 'outlet')}`;
 const qtyLine = (items) => items.map((i) => `${i.label} × ${i.qty}`).join(', ');
 
 // ───────────── data ─────────────
@@ -38,7 +40,7 @@ function outletText(o, date) {
   return lines.join('\n');
 }
 function kitchenText(L, date) {
-  const lines = [`*Qasr Laban — Kitchen list*`, `${fmtDate(date, true)} · ${L.ready.length} collabs · ${L.outlets.length} outlets`, '', '*Total to prepare*'];
+  const lines = [`*Qasr Laban — Kitchen list*`, `${fmtDate(date, true)} · ${countLabel(L)}`, '', '*Total to prepare*'];
   L.kitchen.forEach((k) => lines.push(`• ${k.label} × ${k.qty}`));
   lines.push('', '*By outlet*');
   L.perOutlet.forEach((o) => lines.push(`${o.name}: ${qtyLine(o.items)}`));
@@ -119,7 +121,7 @@ const outletImage = (o, date) => renderImage({
   })),
 });
 const kitchenImage = (L, date) => renderImage({
-  title: 'Kitchen list', subtitle: `${fmtDate(date, true)} · ${L.ready.length} collabs · ${L.outlets.length} outlets`,
+  title: 'Kitchen list', subtitle: `${fmtDate(date, true)} · ${countLabel(L)}`,
   rows: [{ type: 'h', text: 'Total to prepare' }, ...L.kitchen.map((k) => ({ type: 'row', left: k.label, right: `× ${k.qty}` })),
     { type: 'h', text: 'By outlet' }, ...L.perOutlet.map((o) => ({ type: 'item', title: o.name, body: qtyLine(o.items) }))],
 });
@@ -140,7 +142,7 @@ function downloadFile(blob, name) {
 // ───────────── printable sheets ─────────────
 const printSheets = (L, date) => html`
   <div class="print-sheet">
-    <div class="print-head"><img src="/assets/logo-blue.png" alt="" /><div style="text-align:right"><b style="font-size:18px">Kitchen list</b><div class="muted">${fmtDate(date, true)} · ${L.ready.length} collabs · ${L.outlets.length} outlets</div></div></div>
+    <div class="print-head"><img src="/assets/logo-blue.png" alt="" /><div style="text-align:right"><b style="font-size:18px">Kitchen list</b><div class="muted">${fmtDate(date, true)} · ${countLabel(L)}</div></div></div>
     <h3 class="ps-h">Total to prepare</h3>
     <table class="t"><tbody>${L.kitchen.map((k) => html`<tr><td><b>${k.label}</b></td><td class="r"><b>× ${k.qty}</b></td></tr>`)}</tbody></table>
     <h3 class="ps-h">By outlet</h3>

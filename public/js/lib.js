@@ -6,15 +6,24 @@ export const can = (p) => state.perms.includes(p);
 
 // ───── api ─────
 async function request(path, opts = {}) {
-  const res = await fetch('/api' + path, {
-    method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-    credentials: 'same-origin',
-  });
+  let res;
+  try {
+    res = await fetch('/api' + path, {
+      method: opts.method || 'GET',
+      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      credentials: 'same-origin',
+    });
+  } catch {
+    // The browser could not reach the server at all (offline, or the server is not running)
+    throw new Error(navigator.onLine === false
+      ? "You're offline. Check your internet connection and try again."
+      : "Can't reach the server. Check your connection and try again in a moment.");
+  }
   if (res.status === 401 && !path.startsWith('/login') && !path.startsWith('/share')) { location.hash = ''; window.dispatchEvent(new Event('ql:logout')); }
-  const data = res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new Error(data?.error || 'Request failed');
+  const isJson = res.headers.get('content-type')?.includes('json');
+  const data = isJson ? await res.json().catch(() => null) : await res.text();
+  if (!res.ok) throw new Error((isJson && data?.error) || `The server had a problem (error ${res.status}). Please try again.`);
   return data;
 }
 
