@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node --no-warnings server.js",
     "dev": "node --no-warnings --watch server.js",
-    "copy-to-turso": "node --no-warnings scripts/copy-to-turso.mjs"
+    "copy-to-turso": "node --no-warnings scripts/copy-to-turso.mjs",
+    "check-turso": "node --no-warnings scripts/check-turso.mjs"
   },
   "engines": {
     "node": ">=22.13"
