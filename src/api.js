@@ -1,6 +1,6 @@
 // The whole REST API, independent of any web server. Both the local Node server (server.js)
 // and the Vercel Function (api/index.mjs) call handle() with a plain request object.
-import { all, get, run, tx, ready, newToken } from './db.js';
+import { all, get, run, tx, ready, newToken, usingTurso } from './db.js';
 import { hashPassword, verifyPassword, can, PERMS } from './auth.js';
 
 const SESSION_DAYS = 30;
@@ -456,9 +456,26 @@ const json = (status, data, headers = {}) => ({ status, headers: { 'Content-Type
  * @param {{ method: string, path: string, query: object, cookie?: string, body?: string, ip?: string, secure?: boolean }} req
  * @returns {Promise<{ status: number, headers: object, body: string }>}
  */
+// Explain database connection failures in plain words (Turso error codes never include the token).
+function dbProblem(e) {
+  const m = `${e?.code || ''} ${e?.message || e}`;
+  let hint = 'Check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in your hosting settings, then redeploy.';
+  if (/URL_INVALID|URL_SCHEME/i.test(m)) hint = 'TURSO_DATABASE_URL is not a valid address. It should look like libsql://your-db-name.turso.io';
+  else if (/\b401\b|unauthori[sz]ed|token|jwt/i.test(m)) hint = 'Turso rejected the token. Create a new token (Read & Write, never expires) and update TURSO_AUTH_TOKEN, then redeploy.';
+  else if (/\b404\b|not found/i.test(m)) hint = 'Turso could not find that database. Copy the URL again from the database page and update TURSO_DATABASE_URL, then redeploy.';
+  else if (/ENOTFOUND|EAI_AGAIN|fetch failed|network/i.test(m)) hint = 'Could not reach Turso. Check TURSO_DATABASE_URL for typos, then redeploy.';
+  return { error: `Can't connect to the database. ${hint}`, detail: m.replace(/\s+/g, ' ').trim().slice(0, 160) };
+}
+
 export async function handle(req) {
   try {
     await ready();
+  } catch (e) {
+    console.error('Database connection failed:', e);
+    return json(503, dbProblem(e));
+  }
+  if (req.method === 'GET' && req.path === '/api/health') return json(200, { ok: true, database: usingTurso() ? 'turso' : 'local file' });
+  try {
     for (const r of routes) {
       if (r.method !== req.method) continue;
       const m = req.path.match(r.re); if (!m) continue;

@@ -184,15 +184,19 @@ async function seed() {
   console.log('  Change it from More → Profile after signing in.\n');
 }
 
+// Settings pasted into a hosting dashboard often pick up quotes or spaces — ignore them.
+const setting = (name) => (process.env[name] || '').trim().replace(/^["']+|["']+$/g, '').trim();
+export const usingTurso = () => !!setting('TURSO_DATABASE_URL');
+
 let readyPromise;
 /** Connect, create tables if missing and seed an empty database. Cheap to call on every request. */
 export function ready() {
   return (readyPromise ||= (async () => {
-    const url = process.env.TURSO_DATABASE_URL;
+    const url = setting('TURSO_DATABASE_URL');
     if (url) {
       // The fetch-based client runs anywhere (Vercel Functions included); file: URLs need the full client.
       const { createClient } = url.startsWith('file:') ? await import('@libsql/client') : await import('@libsql/client/web');
-      backend = libsqlBackend(createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN }));
+      backend = libsqlBackend(createClient({ url, authToken: setting('TURSO_AUTH_TOKEN') || undefined }));
     } else {
       const { fileURLToPath } = await import('node:url');
       backend = await sqliteFileBackend(process.env.DB_PATH || fileURLToPath(new URL('../data/qasr.db', import.meta.url)));
